@@ -1,19 +1,11 @@
 # circuit-json-trace-length-analysis
 
-Analyze a Circuit JSON graph for one pin or net and get back a trace-length digest.
+Analyze Circuit JSON for one pin or net and get back a trace-length digest.
 
 ## Install
 
-Add it to another project:
-
 ```bash
 bun add https://github.com/tscircuit/circuit-json-trace-length-analysis
-```
-
-For local development in this repo:
-
-```bash
-bun install
 ```
 
 ## Usage
@@ -30,10 +22,33 @@ const analysis = analyzeCircuitJsonTraceLength(circuitJson, {
 })
 
 console.log(analysis.toString())
+```
 
-for (const trace of analysis.listTraces()) {
-  console.log(trace.lengthMm, trace.connectionType)
-}
+```xml
+<TraceLengthAnalysis requestedTarget="U1.USB_DP" resolvedTarget="U1.USB_DP" targetKind="pin" traceCount="1" totalLengthMm="34.10">
+  <Trace id="source_trace_9" label="U1.USB_DP -> J1.D_P" connectionType="direct connection" lengthMm="34.10">
+    <ConnectedPins>
+      <Pin ref="U1.USB_DP" />
+      <Pin ref="J1.D_P" />
+    </ConnectedPins>
+    <PinPositions>
+      <Pin ref="U1.USB_DP" x="0.25" y="-5.66" layers="top" />
+      <Pin ref="J1.D_P" x="-33.25" y="0.70" layers="top" />
+    </PinPositions>
+    <Connection kind="direct connection" target="J1.D_P" x="-33.25" y="0.70" layer="top" />
+    <TraceRequirements none />
+    <Path>
+      <Point x="0.25" y="-5.66" layer="top" kind="endpoint" />
+      <Point x="-4.66" y="-4.73" layer="top" kind="track" />
+      <Point x="-9.57" y="-3.80" layer="top" kind="track" />
+      <Point x="-14.49" y="-2.86" layer="top" kind="track" />
+      <Point x="-19.40" y="-1.93" layer="top" kind="track" />
+      <Point x="-24.31" y="-1.00" layer="top" kind="track" />
+      <Point x="-29.22" y="-0.06" layer="top" kind="track" />
+      <Point x="-33.25" y="0.70" layer="top" kind="endpoint" />
+    </Path>
+  </Trace>
+</TraceLengthAnalysis>
 ```
 
 ## Targets
@@ -74,65 +89,3 @@ Each `Trace` includes:
 - `requirements`
 - `points`
 - `toString()`
-
-## XML Output
-
-The XML output uses:
-
-- PascalCase elements
-- camelCase attributes
-- 0.01mm precision
-
-Example:
-
-```xml
-<TraceLengthAnalysis requestedTarget="U1.USB_DP" resolvedTarget="U1.USB_DP" targetKind="pin" traceCount="1" totalLengthMm="34.10">
-  <Trace id="source_trace_9" label="U1.USB_DP -> J1.D_P" connectionType="direct connection" lengthMm="34.10">
-    <ConnectedPins>
-      <Pin ref="U1.USB_DP" />
-      <Pin ref="J1.D_P" />
-    </ConnectedPins>
-    <PinPositions>
-      <Pin ref="U1.USB_DP" x="0.25" y="-5.66" layers="top" />
-      <Pin ref="J1.D_P" x="-33.25" y="0.70" layers="top" />
-    </PinPositions>
-    <Connection kind="direct connection" target="J1.D_P" x="-33.25" y="0.70" layer="top" />
-    <TraceRequirements none />
-    <Path>
-      <Point x="0.25" y="-5.66" layer="top" kind="endpoint" />
-      <Point x="-4.66" y="-4.73" layer="top" kind="track" />
-      <Point x="-9.57" y="-3.80" layer="top" kind="track" />
-      <Point x="-14.49" y="-2.86" layer="top" kind="track" />
-      <Point x="-19.40" y="-1.93" layer="top" kind="track" />
-      <Point x="-24.31" y="-1.00" layer="top" kind="track" />
-      <Point x="-29.22" y="-0.06" layer="top" kind="track" />
-      <Point x="-33.25" y="0.70" layer="top" kind="endpoint" />
-    </Path>
-  </Trace>
-</TraceLengthAnalysis>
-```
-
-`Point.kind` is one of:
-
-- `endpoint`
-- `track`
-- `via`
-
-## Current Path Model
-
-This repo currently analyzes from `source_trace`, `source_net`, `source_port`, `source_component`, and `pcb_port`.
-
-- Direct traces are measured as straight-line pin-to-pin geometry.
-- Net traces are measured from the selected pin to an inferred net hub.
-- If layers differ, an inferred via is inserted at the midpoint.
-- Intermediate `track` points are inserted every 5mm.
-
-This is geometric inference from the available Circuit JSON data, not exact routed-copper extraction.
-
-## Development
-
-```bash
-bun test
-bun run typecheck
-bun run format:check
-```
