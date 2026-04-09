@@ -1,0 +1,23 @@
+{
+  "name": "circuit-json-trace-length-analysis",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "main": "lib/index.ts",
+  "module": "lib/index.ts",
+  "types": "lib/index.ts",
+  "files": ["lib"],
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit",
+    "format": "biome format --write .",
+    "format:check": "biome format ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.11",
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
