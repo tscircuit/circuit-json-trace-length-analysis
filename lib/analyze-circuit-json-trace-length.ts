@@ -42,6 +42,24 @@ type PcbPort = {
   layers?: string[]
 }
 
+type PcbTraceRoutePoint = {
+  route_type?: string
+  x?: number
+  y?: number
+  layer?: string
+  start_pcb_port_id?: string
+  end_pcb_port_id?: string
+}
+
+type PcbTrace = {
+  type: "pcb_trace"
+  pcb_trace_id: string
+  source_trace_id?: string
+  connection_name?: string
+  layer?: string
+  route?: PcbTraceRoutePoint[]
+}
+
 type ResolvedTarget =
   | {
       kind: "net"
@@ -93,6 +111,7 @@ type TraceModel = {
   requirements: TraceRequirement
   points: TracePoint[]
   lengthMm: number
+  straightLineDistanceMm: number
   sourceTraceId: string
   displayName: string | null
 }
@@ -116,6 +135,7 @@ export class Trace {
   readonly requirements: TraceRequirement
   readonly points: TracePoint[]
   readonly lengthMm: number
+  readonly straightLineDistanceMm: number
   readonly sourceTraceId: string
   readonly displayName: string | null
 
@@ -130,13 +150,14 @@ export class Trace {
     this.requirements = model.requirements
     this.points = model.points
     this.lengthMm = model.lengthMm
+    this.straightLineDistanceMm = model.straightLineDistanceMm
     this.sourceTraceId = model.sourceTraceId
     this.displayName = model.displayName
   }
 
   toString() {
     const lines = [
-      `<Trace id="${escapeXml(this.id)}" label="${escapeXml(this.label)}" connectionType="${escapeXml(this.connectionType)}" lengthMm="${formatNumber(this.lengthMm)}">`,
+      `<Trace id="${escapeXml(this.id)}" label="${escapeXml(this.label)}" connectionType="${escapeXml(this.connectionType)}" lengthMm="${formatNumber(this.lengthMm)}" straightLineDistanceMm="${formatNumber(this.straightLineDistanceMm)}">`,
       `  <ConnectedPins>`,
       ...this.connectedPins.map(
         (pin) => `    <Pin ref="${escapeXml(pin.ref)}" />`,
@@ -147,14 +168,21 @@ export class Trace {
       `  </PinPositions>`,
       renderConnection(this),
       renderRequirements(this.requirements, "  "),
-      `  <Path>`,
-      ...this.points.map(
-        (point) =>
-          `    <Point x="${formatNumber(point.x)}" y="${formatNumber(point.y)}" layer="${escapeXml(point.layer)}" kind="${escapeXml(point.kind)}" />`,
-      ),
-      `  </Path>`,
       `</Trace>`,
     ]
+
+    if (this.points.length > 0) {
+      lines.splice(
+        lines.length - 1,
+        0,
+        `  <Path>`,
+        ...this.points.map(
+          (point) =>
+            `    <Point x="${formatNumber(point.x)}" y="${formatNumber(point.y)}" layer="${escapeXml(point.layer)}" kind="${escapeXml(point.kind)}" />`,
+        ),
+        `  </Path>`,
+      )
+    }
 
     return lines.join("\n")
   }
@@ -165,6 +193,7 @@ export class TraceLengthAnalysis {
   readonly resolvedTarget: string
   readonly targetKind: "pin" | "net"
   readonly totalLengthMm: number
+  readonly totalStraightLineDistanceMm: number
   readonly traceCount: number
   #traces: Trace[]
 
@@ -182,6 +211,10 @@ export class TraceLengthAnalysis {
       (sum, trace) => sum + trace.lengthMm,
       0,
     )
+    this.totalStraightLineDistanceMm = this.#traces.reduce(
+      (sum, trace) => sum + trace.straightLineDistanceMm,
+      0,
+    )
     this.traceCount = this.#traces.length
   }
 
@@ -191,7 +224,7 @@ export class TraceLengthAnalysis {
 
   toString() {
     const lines = [
-      `<TraceLengthAnalysis requestedTarget="${escapeXml(this.requestedTarget)}" resolvedTarget="${escapeXml(this.resolvedTarget)}" targetKind="${escapeXml(this.targetKind)}" traceCount="${this.traceCount}" totalLengthMm="${formatNumber(this.totalLengthMm)}">`,
+      `<TraceLengthAnalysis requestedTarget="${escapeXml(this.requestedTarget)}" resolvedTarget="${escapeXml(this.resolvedTarget)}" targetKind="${escapeXml(this.targetKind)}" traceCount="${this.traceCount}" totalLengthMm="${formatNumber(this.totalLengthMm)}" totalStraightLineDistanceMm="${formatNumber(this.totalStraightLineDistanceMm)}">`,
       ...this.#traces.flatMap((trace) =>
         trace
           .toString()
@@ -232,6 +265,8 @@ class CircuitJsonIndex {
   readonly netsById = new Map<string, SourceNet>()
   readonly netsByName = new Map<string, SourceNet[]>()
   readonly pcbPortsBySourcePortId = new Map<string, PcbPort[]>()
+  readonly pcbTracesBySourceTraceId = new Map<string, PcbTrace[]>()
+  readonly pcbTracesByConnectionName = new Map<string, PcbTrace[]>()
   readonly tracesById = new Map<string, SourceTrace>()
   readonly tracesByPortId = new Map<string, SourceTrace[]>()
   readonly tracesByNetId = new Map<string, SourceTrace[]>()
@@ -250,6 +285,9 @@ class CircuitJsonIndex {
           break
         case "pcb_port":
           this.addPcbPort(item as PcbPort)
+          break
+        case "pcb_trace":
+          this.addPcbTrace(item as PcbTrace)
           break
         case "source_trace":
           this.addTrace(item as SourceTrace)
@@ -300,6 +338,24 @@ class CircuitJsonIndex {
     const componentName = component?.name ?? port.source_component_id
     const portName = port.name ?? String(port.pin_number ?? port.source_port_id)
     return `${componentName}.${portName}`
+  }
+
+  getPcbPathPoints(sourceTraceId: string) {
+    const candidates = dedupePcbTraces([
+      ...(this.pcbTracesBySourceTraceId.get(sourceTraceId) ?? []),
+      ...(this.pcbTracesByConnectionName.get(sourceTraceId) ?? []),
+    ])
+    const pcbTraceIds = new Set(candidates.map((trace) => trace.pcb_trace_id))
+
+    if (candidates.length === 0 || pcbTraceIds.size > 1) {
+      return []
+    }
+
+    const routePoints = candidates.flatMap((trace) =>
+      normalizePcbTraceRoute(trace),
+    )
+
+    return convertPcbTraceRouteToPath(routePoints)
   }
 
   getConnectedPinsForNet(sourceNetId: string) {
@@ -355,6 +411,24 @@ class CircuitJsonIndex {
 
   private addPcbPort(pcbPort: PcbPort) {
     this.addLookup(this.pcbPortsBySourcePortId, pcbPort.source_port_id, pcbPort)
+  }
+
+  private addPcbTrace(pcbTrace: PcbTrace) {
+    if (pcbTrace.source_trace_id) {
+      this.addLookup(
+        this.pcbTracesBySourceTraceId,
+        pcbTrace.source_trace_id,
+        pcbTrace,
+      )
+    }
+
+    if (pcbTrace.connection_name) {
+      this.addLookup(
+        this.pcbTracesByConnectionName,
+        pcbTrace.connection_name,
+        pcbTrace,
+      )
+    }
   }
 
   private addTrace(trace: SourceTrace) {
@@ -626,29 +700,15 @@ function createDirectTraceModel(
 
   const firstPosition = requirePortPosition(index, firstPortId)
   const secondPosition = requirePortPosition(index, secondPortId)
-  const firstLayer = primaryLayer(firstPosition.layers)
   const secondLayer = primaryLayer(secondPosition.layers)
-
-  const basePoints = buildPathBetween({
-    from: {
-      x: firstPosition.x,
-      y: firstPosition.y,
-      layer: firstLayer,
-      kind: "endpoint",
-    },
-    to: {
-      x: secondPosition.x,
-      y: secondPosition.y,
-      layer: secondLayer,
-      kind: "endpoint",
-    },
-  })
-
-  const points = densifyPath(basePoints)
   const connectedPins = orderedPortIds.map((sourcePortId) =>
     index.toConnectedPin(sourcePortId),
   )
   const connectionTarget = index.getPortReference(secondPortId)
+  const straightLineDistanceMm = distanceBetween(firstPosition, secondPosition)
+  const points = index.getPcbPathPoints(args.trace.source_trace_id)
+  const lengthMm =
+    points.length > 1 ? measurePathLength(points) : straightLineDistanceMm
 
   return {
     id: args.trace.source_trace_id,
@@ -669,7 +729,8 @@ function createDirectTraceModel(
           : null,
     },
     points,
-    lengthMm: measurePathLength(points),
+    lengthMm,
+    straightLineDistanceMm,
     sourceTraceId: args.trace.source_trace_id,
     displayName: args.trace.display_name ?? null,
   }
@@ -695,22 +756,10 @@ function createNetTraceModel(
     .sort((a, b) => a.ref.localeCompare(b.ref))
   const hub = inferNetHub(connectedPins, focusLayer)
   const focusPin = index.toConnectedPin(args.focusSourcePortId)
-  const path = densifyPath(
-    buildPathBetween({
-      from: {
-        x: focusPosition.x,
-        y: focusPosition.y,
-        layer: focusLayer,
-        kind: "endpoint",
-      },
-      to: {
-        x: hub.x,
-        y: hub.y,
-        layer: hub.layer,
-        kind: "endpoint",
-      },
-    }),
-  )
+  const points = index.getPcbPathPoints(args.trace.source_trace_id)
+  const straightLineDistanceMm = distanceBetween(focusPosition, hub)
+  const lengthMm =
+    points.length > 1 ? measurePathLength(points) : straightLineDistanceMm
 
   return {
     id: `${args.trace.source_trace_id}:${args.focusSourcePortId}`,
@@ -726,8 +775,9 @@ function createNetTraceModel(
           ? args.trace.max_length
           : null,
     },
-    points: path,
-    lengthMm: measurePathLength(path),
+    points,
+    lengthMm,
+    straightLineDistanceMm,
     sourceTraceId: args.trace.source_trace_id,
     displayName: args.trace.display_name ?? null,
   }
@@ -787,78 +837,6 @@ function inferNetHub(
   return { x, y, layer }
 }
 
-function buildPathBetween(args: {
-  from: TracePoint
-  to: TracePoint
-}): TracePoint[] {
-  if (args.from.layer === args.to.layer) {
-    return [args.from, args.to]
-  }
-
-  const viaX = (args.from.x + args.to.x) / 2
-  const viaY = (args.from.y + args.to.y) / 2
-
-  return [
-    args.from,
-    {
-      x: viaX,
-      y: viaY,
-      layer: args.from.layer,
-      kind: "via",
-    },
-    {
-      x: viaX,
-      y: viaY,
-      layer: args.to.layer,
-      kind: "via",
-    },
-    args.to,
-  ]
-}
-
-function densifyPath(basePoints: TracePoint[]): TracePoint[] {
-  if (basePoints.length === 0) {
-    return []
-  }
-
-  const firstPoint = basePoints[0]
-  if (!firstPoint) {
-    return []
-  }
-
-  const points: TracePoint[] = [firstPoint]
-
-  for (let index = 1; index < basePoints.length; index += 1) {
-    const previous = basePoints[index - 1]
-    const current = basePoints[index]
-    if (!previous || !current) {
-      continue
-    }
-
-    const distance = distanceBetween(previous, current)
-
-    if (distance > 0 && previous.layer === current.layer) {
-      for (
-        let sampleDistance = 5;
-        sampleDistance < distance;
-        sampleDistance += 5
-      ) {
-        const progress = sampleDistance / distance
-        points.push({
-          x: lerp(previous.x, current.x, progress),
-          y: lerp(previous.y, current.y, progress),
-          layer: previous.layer,
-          kind: "track",
-        })
-      }
-    }
-
-    points.push(current)
-  }
-
-  return points
-}
-
 function measurePathLength(points: TracePoint[]) {
   let lengthMm = 0
 
@@ -873,6 +851,87 @@ function measurePathLength(points: TracePoint[]) {
   }
 
   return lengthMm
+}
+
+function dedupePcbTraces(pcbTraces: PcbTrace[]) {
+  const seen = new Set<PcbTrace>()
+  const deduped: PcbTrace[] = []
+
+  for (const pcbTrace of pcbTraces) {
+    if (seen.has(pcbTrace)) {
+      continue
+    }
+
+    seen.add(pcbTrace)
+    deduped.push(pcbTrace)
+  }
+
+  return deduped
+}
+
+function normalizePcbTraceRoute(pcbTrace: PcbTrace) {
+  if (!Array.isArray(pcbTrace.route)) {
+    return []
+  }
+
+  return pcbTrace.route
+    .filter(
+      (point): point is PcbTraceRoutePoint & { x: number; y: number } =>
+        typeof point.x === "number" && typeof point.y === "number",
+    )
+    .map((point) => ({
+      ...point,
+      layer:
+        typeof point.layer === "string" && point.layer.length > 0
+          ? point.layer
+          : typeof pcbTrace.layer === "string" && pcbTrace.layer.length > 0
+            ? pcbTrace.layer
+            : "top",
+    }))
+}
+
+function convertPcbTraceRouteToPath(
+  routePoints: Array<
+    PcbTraceRoutePoint & { x: number; y: number; layer: string }
+  >,
+) {
+  const deduped = routePoints.filter((point, index) => {
+    const previous = routePoints[index - 1]
+    return (
+      !previous ||
+      previous.x !== point.x ||
+      previous.y !== point.y ||
+      previous.layer !== point.layer
+    )
+  })
+
+  return deduped.map((point, index) => ({
+    x: point.x,
+    y: point.y,
+    layer: point.layer,
+    kind: classifyPcbTracePoint(point, index, deduped.length),
+  }))
+}
+
+function classifyPcbTracePoint(
+  point: PcbTraceRoutePoint,
+  index: number,
+  pointCount: number,
+): TracePointKind {
+  if (point.route_type === "via") {
+    return "via"
+  }
+
+  if (
+    index === 0 ||
+    index === pointCount - 1 ||
+    point.start_pcb_port_id ||
+    point.end_pcb_port_id
+  ) {
+    return "endpoint"
+  }
+
+  return "track"
 }
 
 function renderPinPosition(pin: ConnectedPin, indent: string) {
@@ -952,10 +1011,6 @@ function distanceBetween(
   right: Pick<TracePoint, "x" | "y">,
 ) {
   return Math.hypot(right.x - left.x, right.y - left.y)
-}
-
-function lerp(start: number, end: number, amount: number) {
-  return start + (end - start) * amount
 }
 
 function formatNumber(value: number) {

@@ -51,6 +51,39 @@ console.log(analysis.toString())
 </TraceLengthAnalysis>
 ```
 
+## XML Output
+
+The XML output uses:
+
+- PascalCase elements
+- camelCase attributes
+- 0.01mm precision
+
+Example:
+
+```xml
+<TraceLengthAnalysis requestedTarget="U1.USB_DP" resolvedTarget="U1.USB_DP" targetKind="pin" traceCount="1" totalLengthMm="34.10" totalStraightLineDistanceMm="34.10">
+  <Trace id="source_trace_9" label="U1.USB_DP -> J1.D_P" connectionType="direct connection" lengthMm="34.10" straightLineDistanceMm="34.10">
+    <ConnectedPins>
+      <Pin ref="U1.USB_DP" />
+      <Pin ref="J1.D_P" />
+    </ConnectedPins>
+    <PinPositions>
+      <Pin ref="U1.USB_DP" x="0.25" y="-5.66" layers="top" />
+      <Pin ref="J1.D_P" x="-33.25" y="0.70" layers="top" />
+    </PinPositions>
+    <Connection kind="direct connection" target="J1.D_P" x="-33.25" y="0.70" layer="top" />
+    <TraceRequirements none />
+  </Trace>
+</TraceLengthAnalysis>
+```
+
+`Point.kind` is one of:
+
+- `endpoint`
+- `track`
+- `via`
+
 ## Targets
 
 - Pin: `U1.USB_DP`
@@ -76,12 +109,14 @@ It exposes:
 - `listTraces()` for structured `Trace` objects
 - `traceCount`
 - `totalLengthMm`
+- `totalStraightLineDistanceMm`
 - `requestedTarget`
 - `resolvedTarget`
 
 Each `Trace` includes:
 
 - `lengthMm`
+- `straightLineDistanceMm`
 - `connectionType`
 - `connectionTarget`
 - `connectedPins`
