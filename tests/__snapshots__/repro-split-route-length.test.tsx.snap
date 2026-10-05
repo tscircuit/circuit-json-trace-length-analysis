@@ -1,0 +1,30 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`a routed net with three PCB traces is reported as a straight line 1`] = `
+"<TraceLengthAnalysis requestedTarget="net.SIGNAL" resolvedTarget="net.SIGNAL" targetKind="net" traceCount="2" totalLengthMm="6.00" totalStraightLineDistanceMm="6.00">
+  <Trace id="source_trace_0:source_port_0" label="U1.pin1 -&gt; net.SIGNAL" connectionType="via net" lengthMm="3.00" straightLineDistanceMm="3.00">
+    <ConnectedPins>
+      <Pin ref="U1.pin1" />
+      <Pin ref="U2.pin1" />
+    </ConnectedPins>
+    <PinPositions>
+      <Pin ref="U1.pin1" x="0.00" y="0.00" layers="top" />
+      <Pin ref="U2.pin1" x="6.00" y="0.00" layers="top" />
+    </PinPositions>
+    <Connection kind="via net" target="net.SIGNAL" x="3.00" y="0.00" layer="top" />
+    <TraceRequirements none />
+  </Trace>
+  <Trace id="source_trace_1:source_port_1" label="U2.pin1 -&gt; net.SIGNAL" connectionType="via net" lengthMm="3.00" straightLineDistanceMm="3.00">
+    <ConnectedPins>
+      <Pin ref="U2.pin1" />
+      <Pin ref="U1.pin1" />
+    </ConnectedPins>
+    <PinPositions>
+      <Pin ref="U2.pin1" x="6.00" y="0.00" layers="top" />
+      <Pin ref="U1.pin1" x="0.00" y="0.00" layers="top" />
+    </PinPositions>
+    <Connection kind="via net" target="net.SIGNAL" x="3.00" y="0.00" layer="top" />
+    <TraceRequirements none />
+  </Trace>
+</TraceLengthAnalysis>"
+`;
