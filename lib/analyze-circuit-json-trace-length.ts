@@ -1,3 +1,12 @@
+import { pcb_trace, type PcbTrace } from "circuit-json"
+
+const routedTraceSchema = pcb_trace.pick({
+  type: true,
+  pcb_trace_id: true,
+  source_trace_id: true,
+  route: true,
+})
+
 type CircuitJsonItem = {
   type: string
   [key: string]: unknown
@@ -40,24 +49,6 @@ type PcbPort = {
   x?: number
   y?: number
   layers?: string[]
-}
-
-type PcbTraceRoutePoint = {
-  route_type?: string
-  x?: number
-  y?: number
-  layer?: string
-  start_pcb_port_id?: string
-  end_pcb_port_id?: string
-}
-
-type PcbTrace = {
-  type: "pcb_trace"
-  pcb_trace_id: string
-  source_trace_id?: string
-  connection_name?: string
-  layer?: string
-  route?: PcbTraceRoutePoint[]
 }
 
 type ResolvedTarget =
@@ -266,7 +257,6 @@ class CircuitJsonIndex {
   readonly netsByName = new Map<string, SourceNet[]>()
   readonly pcbPortsBySourcePortId = new Map<string, PcbPort[]>()
   readonly pcbTracesBySourceTraceId = new Map<string, PcbTrace[]>()
-  readonly pcbTracesByConnectionName = new Map<string, PcbTrace[]>()
   readonly tracesById = new Map<string, SourceTrace>()
   readonly tracesByPortId = new Map<string, SourceTrace[]>()
   readonly tracesByNetId = new Map<string, SourceTrace[]>()
@@ -287,7 +277,7 @@ class CircuitJsonIndex {
           this.addPcbPort(item as PcbPort)
           break
         case "pcb_trace":
-          this.addPcbTrace(item as PcbTrace)
+          this.addPcbTrace(routedTraceSchema.parse(item))
           break
         case "source_trace":
           this.addTrace(item as SourceTrace)
@@ -340,11 +330,19 @@ class CircuitJsonIndex {
     return `${componentName}.${portName}`
   }
 
+  getPcbTraceLength(sourceTraceId: string) {
+    const candidates = this.pcbTracesBySourceTraceId.get(sourceTraceId) ?? []
+    const routes = dedupePcbTraces(candidates)
+      .map(normalizePcbTraceRoute)
+      .filter((points) => points.length > 1)
+    if (routes.length === 0) return undefined
+    return routes.reduce((sum, points) => sum + measurePathLength(points), 0)
+  }
+
   getPcbPathPoints(sourceTraceId: string) {
-    const candidates = dedupePcbTraces([
-      ...(this.pcbTracesBySourceTraceId.get(sourceTraceId) ?? []),
-      ...(this.pcbTracesByConnectionName.get(sourceTraceId) ?? []),
-    ])
+    const candidates = dedupePcbTraces(
+      this.pcbTracesBySourceTraceId.get(sourceTraceId) ?? [],
+    )
     const pcbTraceIds = new Set(candidates.map((trace) => trace.pcb_trace_id))
 
     if (candidates.length === 0 || pcbTraceIds.size > 1) {
@@ -355,7 +353,7 @@ class CircuitJsonIndex {
       normalizePcbTraceRoute(trace),
     )
 
-    return convertPcbTraceRouteToPath(routePoints)
+    return routePoints
   }
 
   getConnectedPinsForNet(sourceNetId: string) {
@@ -418,14 +416,6 @@ class CircuitJsonIndex {
       this.addLookup(
         this.pcbTracesBySourceTraceId,
         pcbTrace.source_trace_id,
-        pcbTrace,
-      )
-    }
-
-    if (pcbTrace.connection_name) {
-      this.addLookup(
-        this.pcbTracesByConnectionName,
-        pcbTrace.connection_name,
         pcbTrace,
       )
     }
@@ -652,21 +642,36 @@ function collectNetTraces(
   target: Extract<ResolvedTarget, { kind: "net" }>,
 ) {
   const traces = index.tracesByNetId.get(target.net.source_net_id) ?? []
+  const hasRoutedTraces = traces.some(
+    (trace) => index.getPcbTraceLength(trace.source_trace_id) !== undefined,
+  )
 
   return traces
     .flatMap((trace) => {
-      const connectedSourcePortIds = trace.connected_source_port_ids ?? []
+      let connectedSourcePortIds = trace.connected_source_port_ids ?? []
       if (connectedSourcePortIds.length === 0) {
         return []
       }
 
-      return connectedSourcePortIds.map((focusSourcePortId) =>
-        createNetTraceModel(index, {
+      if (index.getPcbTraceLength(trace.source_trace_id) !== undefined) {
+        connectedSourcePortIds = connectedSourcePortIds.slice(0, 1)
+      }
+
+      return connectedSourcePortIds.map((focusSourcePortId) => {
+        const model = createNetTraceModel(index, {
           trace,
           sourceNetId: target.net.source_net_id,
           focusSourcePortId,
-        }),
-      )
+        })
+        if (
+          hasRoutedTraces &&
+          index.getPcbTraceLength(trace.source_trace_id) === undefined
+        ) {
+          // Routed net totals count copper, not additional pin-to-hub estimates.
+          model.lengthMm = 0
+        }
+        return model
+      })
     })
     .sort(compareTraceModels)
     .map((model) => new Trace(model))
@@ -708,7 +713,8 @@ function createDirectTraceModel(
   const straightLineDistanceMm = distanceBetween(firstPosition, secondPosition)
   const points = index.getPcbPathPoints(args.trace.source_trace_id)
   const lengthMm =
-    points.length > 1 ? measurePathLength(points) : straightLineDistanceMm
+    index.getPcbTraceLength(args.trace.source_trace_id) ??
+    straightLineDistanceMm
 
   return {
     id: args.trace.source_trace_id,
@@ -759,7 +765,8 @@ function createNetTraceModel(
   const points = index.getPcbPathPoints(args.trace.source_trace_id)
   const straightLineDistanceMm = distanceBetween(focusPosition, hub)
   const lengthMm =
-    points.length > 1 ? measurePathLength(points) : straightLineDistanceMm
+    index.getPcbTraceLength(args.trace.source_trace_id) ??
+    straightLineDistanceMm
 
   return {
     id: `${args.trace.source_trace_id}:${args.focusSourcePortId}`,
@@ -854,49 +861,44 @@ function measurePathLength(points: TracePoint[]) {
 }
 
 function dedupePcbTraces(pcbTraces: PcbTrace[]) {
-  const seen = new Set<PcbTrace>()
+  const seen = new Set<PcbTrace["pcb_trace_id"]>()
   const deduped: PcbTrace[] = []
 
   for (const pcbTrace of pcbTraces) {
-    if (seen.has(pcbTrace)) {
+    if (seen.has(pcbTrace.pcb_trace_id)) {
       continue
     }
 
-    seen.add(pcbTrace)
+    seen.add(pcbTrace.pcb_trace_id)
     deduped.push(pcbTrace)
   }
 
   return deduped
 }
 
-function normalizePcbTraceRoute(pcbTrace: PcbTrace) {
-  if (!Array.isArray(pcbTrace.route)) {
-    return []
+function normalizePcbTraceRoute(pcbTrace: PcbTrace): TracePoint[] {
+  const points: TracePoint[] = []
+  for (const point of pcbTrace.route) {
+    if (point.route_type === "through_pad") {
+      points.push(
+        { ...point.start, layer: point.start_layer, kind: "track" },
+        { ...point.end, layer: point.end_layer, kind: "track" },
+      )
+    } else if (point.route_type === "via") {
+      points.push({
+        x: point.x,
+        y: point.y,
+        layer: point.to_layer,
+        kind: "via",
+      })
+    } else {
+      let kind: TracePointKind = "track"
+      if (point.start_pcb_port_id || point.end_pcb_port_id) kind = "endpoint"
+      points.push({ x: point.x, y: point.y, layer: point.layer, kind })
+    }
   }
-
-  return pcbTrace.route
-    .filter(
-      (point): point is PcbTraceRoutePoint & { x: number; y: number } =>
-        typeof point.x === "number" && typeof point.y === "number",
-    )
-    .map((point) => ({
-      ...point,
-      layer:
-        typeof point.layer === "string" && point.layer.length > 0
-          ? point.layer
-          : typeof pcbTrace.layer === "string" && pcbTrace.layer.length > 0
-            ? pcbTrace.layer
-            : "top",
-    }))
-}
-
-function convertPcbTraceRouteToPath(
-  routePoints: Array<
-    PcbTraceRoutePoint & { x: number; y: number; layer: string }
-  >,
-) {
-  const deduped = routePoints.filter((point, index) => {
-    const previous = routePoints[index - 1]
+  const distinctPoints = points.filter((point, index) => {
+    const previous = points[index - 1]
     return (
       !previous ||
       previous.x !== point.x ||
@@ -904,34 +906,11 @@ function convertPcbTraceRouteToPath(
       previous.layer !== point.layer
     )
   })
-
-  return deduped.map((point, index) => ({
-    x: point.x,
-    y: point.y,
-    layer: point.layer,
-    kind: classifyPcbTracePoint(point, index, deduped.length),
-  }))
-}
-
-function classifyPcbTracePoint(
-  point: PcbTraceRoutePoint,
-  index: number,
-  pointCount: number,
-): TracePointKind {
-  if (point.route_type === "via") {
-    return "via"
-  }
-
-  if (
-    index === 0 ||
-    index === pointCount - 1 ||
-    point.start_pcb_port_id ||
-    point.end_pcb_port_id
-  ) {
-    return "endpoint"
-  }
-
-  return "track"
+  const first = distinctPoints[0]
+  const last = distinctPoints.at(-1)
+  if (first && first.kind !== "via") first.kind = "endpoint"
+  if (last && last.kind !== "via") last.kind = "endpoint"
+  return distinctPoints
 }
 
 function renderPinPosition(pin: ConnectedPin, indent: string) {

@@ -34,7 +34,7 @@ test("circuit02 trace length snapshot", () => {
           <Point x="-20.51" y="-3.02" layer="top" kind="track" />
           <Point x="-20.29" y="-2.80" layer="top" kind="track" />
           <Point x="-20.40" y="-2.80" layer="top" kind="track" />
-          <Point x="-20.40" y="-2.80" layer="inner1" kind="track" />
+          <Point x="-20.40" y="-2.80" layer="inner1" kind="via" />
           <Point x="-20.40" y="0.70" layer="inner1" kind="track" />
           <Point x="-20.80" y="1.10" layer="inner1" kind="track" />
           <Point x="-20.80" y="1.20" layer="inner1" kind="track" />

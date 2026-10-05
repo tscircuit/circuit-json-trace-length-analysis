@@ -15,9 +15,13 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.11",
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "tscircuit": "0.0.2744"
   },
   "peerDependencies": {
     "typescript": "^5"
+  },
+  "dependencies": {
+    "circuit-json": "0.0.517"
   }
 }
