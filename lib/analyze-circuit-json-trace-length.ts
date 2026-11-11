@@ -609,6 +609,10 @@ function resolveOptionalNetByName(
   netName: string,
 ): SourceNet | null {
   const matchingNets = index.getNetByName(netName)
+  if (matchingNets.length > 1) {
+    throw new Error(`Net "${netName}" is ambiguous`)
+  }
+
   if (matchingNets.length !== 1) {
     return null
   }
